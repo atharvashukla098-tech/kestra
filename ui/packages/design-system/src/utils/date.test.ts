@@ -1,5 +1,5 @@
-import {describe, test, expect} from "vitest"
-import {parseIso, timezonesWithOffset, toIsoKeepOffset} from "./date"
+import {describe, test, expect, afterEach} from "vitest"
+import {currentLocale, currentTimezone, setLocale, TIMEZONE_STORAGE_KEY, parseIso, timezonesWithOffset, toIsoKeepOffset} from "./date"
 import dayjs from "../date/dayjs"
 
 describe("parseIso", () => {
@@ -53,3 +53,59 @@ describe("dayjs instance", () => {
         expect(dayjs("2026-07-24T13:16:00.000Z").utc().format("dddd, MMMM Do YYYY")).toBe("Friday, July 24th 2026")
     })
 })
+
+describe("currentLocale and setLocale", () => {
+    afterEach(async () => {
+        await setLocale("en")
+    })
+
+    test("returns the default locale when none was explicitly set", () => {
+        expect(currentLocale()).toBe("en")
+    })
+
+    test("changes what currentLocale returns", async () => {
+        await setLocale("fr")
+        expect(currentLocale()).toBe("fr")
+
+        await setLocale("pt_BR")
+        expect(currentLocale()).toBe("pt-br")
+    })
+
+    test("affects subsequent date formatting, not just the getter", async () => {
+        await setLocale("fr")
+        expect(dayjs("2026-07-24").format("MMMM")).toBe("juillet")
+
+        await setLocale("en")
+        expect(dayjs("2026-07-24").format("MMMM")).toBe("July")
+    })
+
+    test("falls back to 'en' when an unknown or malformed locale is provided rather than throwing", async () => {
+        await expect(setLocale("unknown_LOCALE_123")).resolves.not.toThrow()
+        expect(currentLocale()).toBe("en")
+
+        await expect(setLocale("")).resolves.not.toThrow()
+        expect(currentLocale()).toBe("en")
+    })
+})
+
+describe("currentTimezone", () => {
+    afterEach(() => {
+        localStorage.removeItem(TIMEZONE_STORAGE_KEY)
+    })
+
+    test("returns the stored timezone when one is set", () => {
+        localStorage.setItem(TIMEZONE_STORAGE_KEY, "Europe/Paris")
+        expect(currentTimezone()).toBe("Europe/Paris")
+    })
+
+    test("falls back to the browser's guessed timezone when none is stored", () => {
+        localStorage.removeItem(TIMEZONE_STORAGE_KEY)
+        expect(currentTimezone()).toBe(dayjs.tz.guess())
+    })
+
+    test("an empty stored string falls back to the browser's guessed timezone", () => {
+        localStorage.setItem(TIMEZONE_STORAGE_KEY, "")
+        expect(currentTimezone()).toBe(dayjs.tz.guess())
+    })
+})
+
