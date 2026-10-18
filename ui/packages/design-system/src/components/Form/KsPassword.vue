@@ -1,5 +1,5 @@
 <template>
-    <div class="ks-password w-100">
+    <div class="ks-password">
         <KsInput
             v-model="model"
             :class="hidden || disabled ? 'ks-password--masked' : ''"
@@ -74,6 +74,7 @@
     }
 
     .ks-password {
+        width: 100%;
         position: relative;
 
         .hide {
