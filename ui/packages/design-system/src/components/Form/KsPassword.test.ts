@@ -30,4 +30,11 @@ describe("KsPassword", () => {
         await wrapper.setProps({disabled: true})
         expect(wrapper.find(".ks-password--masked").exists()).toBe(true)
     })
+
+    test("does not use Bootstrap w-100 utility class", () => {
+        const wrapper = mountPassword({modelValue: "secret"})
+        const root = wrapper.find(".ks-password")
+        expect(root.exists()).toBe(true)
+        expect(root.classes()).not.toContain("w-100")
+    })
 })
