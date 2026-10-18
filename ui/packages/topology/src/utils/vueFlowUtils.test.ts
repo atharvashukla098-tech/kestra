@@ -8,6 +8,12 @@ import {
     computeClusterColor,
     getEdgeColorToken,
     getEdgeColor,
+    withSyntheticErrorsLane,
+    getClusterChildTaskIds,
+    getFlowableGateAliases,
+    haveAdd,
+    replaceIfCollapsed,
+    getNodePosition,
     BranchType,
     type Cluster,
     type MinimalNode,
@@ -1591,3 +1597,341 @@ describe("getEdgeColor", () => {
         expect(getEdgeColor(edge, nodes, clusters)).toBe("danger")
     })
 })
+
+describe("withSyntheticErrorsLane", () => {
+    test("lifts root-level error nodes that belong to no cluster into one synthetic lane", () => {
+        const flowGraph = {
+            nodes: [
+                {uid: "root.task1", type: "io.kestra.GraphTask"},
+                {uid: "root.err1", type: "io.kestra.GraphTask", branchType: BranchType.ERROR},
+                {uid: "root.err2", type: "io.kestra.GraphTask", branchType: BranchType.ERROR},
+            ],
+            clusters: [
+                {
+                    cluster: {
+                        uid: "cluster_root.task1",
+                        type: "io.kestra.GraphCluster",
+                        taskNode: {uid: "root.task1"},
+                    },
+                    nodes: ["root.task1"],
+                    parents: [],
+                },
+            ],
+        }
+
+        const clusters = withSyntheticErrorsLane(flowGraph)
+        expect(clusters).toHaveLength(2)
+        const errorLane = clusters![1]
+        expect(errorLane.cluster.uid).toBe(CLUSTER_PREFIX + "root.Errors")
+        expect(errorLane.cluster.branchType).toBe(BranchType.ERROR)
+        expect(errorLane.cluster.taskNode).toBeNull()
+        expect(errorLane.nodes).toEqual(["root.err1", "root.err2"])
+        expect(errorLane.start).toBe("root.err1")
+        expect(errorLane.end).toBe("root.err2")
+        expect(errorLane.parents).toEqual([])
+    })
+
+    test("leaves the clusters untouched when no error node is unclustered", () => {
+        const originalClusters = [
+            {
+                cluster: {
+                    uid: "cluster_root.task1",
+                    type: "io.kestra.GraphCluster",
+                    taskNode: null,
+                },
+                nodes: ["root.task1"],
+                parents: [],
+            },
+        ]
+
+        const resultWithoutErrors = withSyntheticErrorsLane({
+            nodes: [{uid: "root.task1", type: "io.kestra.GraphTask"}],
+            clusters: originalClusters,
+        })
+        expect(resultWithoutErrors).toBe(originalClusters)
+
+        const clustersWithClusteredError = [
+            {
+                cluster: {
+                    uid: "cluster_root.task1",
+                    type: "io.kestra.GraphCluster",
+                    taskNode: null,
+                },
+                nodes: ["root.task1", "root.err1"],
+                parents: [],
+            },
+        ]
+        const resultWithClusteredErrors = withSyntheticErrorsLane({
+            nodes: [
+                {uid: "root.task1", type: "io.kestra.GraphTask"},
+                {uid: "root.err1", type: "io.kestra.GraphTask", branchType: BranchType.ERROR},
+            ],
+            clusters: clustersWithClusteredError,
+        })
+        expect(resultWithClusteredErrors).toBe(clustersWithClusteredError)
+
+        const resultNoClusters = withSyntheticErrorsLane({
+            nodes: [{uid: "root.task1", type: "io.kestra.GraphTask"}],
+        })
+        expect(resultNoClusters).toEqual([])
+    })
+})
+
+describe("getClusterChildTaskIds", () => {
+    test("returns the task ids inside a cluster and excludes the cluster's own task node", () => {
+        const clusterEntry = {
+            cluster: {
+                uid: "cluster_root.parallel",
+                type: "io.kestra.GraphCluster",
+                taskNode: {uid: "root.parallel"},
+            },
+            nodes: [
+                "root.parallel",
+                "root.parallel.root-1",
+                "root.parallel.task1",
+                "root.parallel.task2",
+                "root.parallel.end-1",
+            ],
+        }
+        const nodeByUid: Record<string, MinimalNode> = {
+            "root.parallel": {uid: "root.parallel", type: "io.kestra.GraphTask"},
+            "root.parallel.root-1": {uid: "root.parallel.root-1", type: "io.kestra.GraphClusterRoot"},
+            "root.parallel.task1": {uid: "root.parallel.task1", type: "io.kestra.GraphTask"},
+            "root.parallel.task2": {uid: "root.parallel.task2", type: "io.kestra.GraphTask"},
+            "root.parallel.end-1": {uid: "root.parallel.end-1", type: "io.kestra.GraphClusterEnd"},
+        }
+
+        expect(getClusterChildTaskIds(clusterEntry, nodeByUid)).toEqual(["task1", "task2"])
+    })
+
+    test("includes nested cluster child lanes not present in nodeByUid", () => {
+        const clusterEntry = {
+            cluster: {
+                uid: "cluster_root.parent",
+                type: "io.kestra.GraphCluster",
+                taskNode: {uid: "root.parent"},
+            },
+            nodes: [
+                "root.parent",
+                "root.parent.childTask",
+                "cluster_root.parent.nestedLane",
+            ],
+        }
+        const nodeByUid: Record<string, MinimalNode> = {
+            "root.parent": {uid: "root.parent", type: "io.kestra.GraphTask"},
+            "root.parent.childTask": {uid: "root.parent.childTask", type: "io.kestra.GraphTask"},
+        }
+
+        expect(getClusterChildTaskIds(clusterEntry, nodeByUid)).toEqual(["childTask", "nestedLane"])
+    })
+})
+
+describe("getFlowableGateAliases", () => {
+    test("maps flowable gate nodes to their lane start dots", () => {
+        const clusters = [
+            {
+                cluster: {
+                    uid: "cluster_root.parallel",
+                    type: "io.kestra.plugin.core.flow.Parallel",
+                    taskNode: {uid: "root.parallel"},
+                },
+                nodes: ["root.parallel.root-1", "root.parallel.task1"],
+                parents: [],
+                start: "root.parallel.root-1",
+            },
+        ]
+
+        expect(getFlowableGateAliases(clusters)).toEqual({"root.parallel": "root.parallel.root-1"})
+    })
+
+    test("excludes collapsed flowables and flowables in edgeReplacer", () => {
+        const clusters = [
+            {
+                cluster: {
+                    uid: "cluster_root.parallel",
+                    type: "io.kestra.plugin.core.flow.Parallel",
+                    taskNode: {uid: "root.parallel"},
+                },
+                nodes: ["root.parallel.root-1"],
+                parents: [],
+                start: "root.parallel.root-1",
+            },
+            {
+                cluster: {
+                    uid: "cluster_root.sequential",
+                    type: "io.kestra.plugin.core.flow.Sequential",
+                    taskNode: {uid: "root.sequential"},
+                },
+                nodes: ["root.sequential.root-1"],
+                parents: [],
+                start: "root.sequential.root-1",
+            },
+        ]
+
+        expect(getFlowableGateAliases(clusters, new Set(["root.parallel"]))).toEqual({
+            "root.sequential": "root.sequential.root-1",
+        })
+        expect(getFlowableGateAliases(clusters, new Set(), {"cluster_root.sequential": "root.sequential"})).toEqual({
+            "root.parallel": "root.parallel.root-1",
+        })
+        expect(getFlowableGateAliases(clusters, new Set(["root.parallel"]), {"cluster_root.sequential": "root.sequential"})).toEqual({})
+    })
+
+    test("returns an empty map when clusters list is empty or entries lack gate / start", () => {
+        expect(getFlowableGateAliases([])).toEqual({})
+
+        const nonFlowableClusters = [
+            {
+                cluster: {
+                    uid: "cluster_root.subflow",
+                    type: "io.kestra.core.models.hierarchies.SubflowGraphCluster",
+                    taskNode: {uid: "root.subflow"},
+                },
+                nodes: [],
+                parents: [],
+                start: "root.subflow.start",
+            },
+            {
+                cluster: {
+                    uid: CLUSTER_PREFIX + "root.Triggers",
+                    type: "io.kestra.core.models.hierarchies.GraphCluster",
+                    taskNode: {uid: "root.Triggers"},
+                },
+                nodes: [],
+                parents: [],
+                start: "root.Triggers.start",
+            },
+            {
+                cluster: {
+                    uid: "cluster_root.noTaskNode",
+                    type: "io.kestra.GraphCluster",
+                    taskNode: null,
+                },
+                nodes: [],
+                parents: [],
+                start: "root.noTaskNode.start",
+            },
+            {
+                cluster: {
+                    uid: "cluster_root.parallel",
+                    type: "io.kestra.plugin.core.flow.Parallel",
+                    taskNode: {uid: "root.parallel"},
+                },
+                nodes: [],
+                parents: [],
+            },
+        ]
+        expect(getFlowableGateAliases(nonFlowableClusters)).toEqual({})
+    })
+})
+
+describe("haveAdd", () => {
+    test("is false for a read-only prefix", () => {
+        const edge = {source: "readOnlyNs.task1", target: "readOnlyNs.task2"}
+        const nodes: Record<string, MinimalNode> = {
+            "readOnlyNs.task1": {uid: "readOnlyNs.task1", type: "io.kestra.GraphTask"},
+            "readOnlyNs.task2": {uid: "readOnlyNs.task2", type: "io.kestra.GraphTask"},
+        }
+        expect(haveAdd(edge, nodes, [], ["readOnlyNs"])).toBeUndefined()
+    })
+
+    test("is true for an ordinary edge", () => {
+        const edge = {source: "root.task1", target: "root.task2"}
+        const nodes: Record<string, MinimalNode> = {
+            "root.task1": {uid: "root.task1", type: "io.kestra.GraphTask"},
+            "root.task2": {uid: "root.task2", type: "io.kestra.GraphTask"},
+        }
+        expect(haveAdd(edge, nodes, [], [])).toEqual({
+            refId: "task2",
+            position: "before",
+        })
+    })
+
+    test("returns undefined when target is in clustersRootTaskUids or connects to triggers", () => {
+        const nodes: Record<string, MinimalNode> = {
+            "root.task1": {uid: "root.task1", type: "io.kestra.GraphTask"},
+            "root.clusterRoot": {uid: "root.clusterRoot", type: "io.kestra.GraphTask"},
+            "root.Triggers": {uid: "root.Triggers", type: "task"},
+        }
+
+        const edgeToClusterRoot = {source: "root.task1", target: "root.clusterRoot"}
+        expect(haveAdd(edgeToClusterRoot, nodes, ["root.clusterRoot"], [])).toBeUndefined()
+
+        const triggerEdge = {source: "root.Triggers", target: "root.task1"}
+        expect(haveAdd(triggerEdge, nodes, [], [])).toBeUndefined()
+    })
+
+    test("returns target position relative to cluster root when target is GraphClusterRoot", () => {
+        const edge = {source: "root.prev", target: "root.parallel.root-1"}
+        const nodes: Record<string, MinimalNode> = {
+            "root.prev": {uid: "root.prev", type: "io.kestra.GraphTask"},
+            "root.parallel.root-1": {uid: "root.parallel.root-1", type: "io.kestra.GraphClusterRoot"},
+        }
+        expect(haveAdd(edge, nodes, [], [])).toEqual({
+            refId: "parallel",
+            position: "before",
+        })
+    })
+
+    test("includes dagDependency when edge is within a Dag lane", () => {
+        const edge = {source: "root.dag.taskA", target: "root.dag.taskB"}
+        const nodes: Record<string, MinimalNode> = {
+            "root.dag": {
+                uid: "root.dag",
+                type: "io.kestra.GraphCluster",
+                task: {type: "io.kestra.plugin.core.flow.Dag"},
+            },
+            "root.dag.taskA": {uid: "root.dag.taskA", type: "io.kestra.GraphTask"},
+            "root.dag.taskB": {uid: "root.dag.taskB", type: "io.kestra.GraphTask"},
+        }
+        expect(haveAdd(edge, nodes, [], [])).toEqual({
+            refId: "taskB",
+            position: "before",
+            dagDependency: {fromId: "taskA", toId: "taskB"},
+        })
+    })
+})
+
+describe("replaceIfCollapsed", () => {
+    test("substitutes a collapsed cluster's node and passes an expanded one through", () => {
+        const edgeReplacer = {"root.parallel.child": "root.parallel"}
+        const collapsed = new Set(["root.parallel"])
+
+        const substituted = replaceIfCollapsed("root.upstream", "root.parallel.child", edgeReplacer, [], collapsed)
+        expect(substituted).toEqual({source: "root.upstream", target: "root.parallel"})
+
+        const passedThrough = replaceIfCollapsed("root.task1", "root.task2", {}, [], new Set())
+        expect(passedThrough).toEqual({source: "root.task1", target: "root.task2"})
+    })
+
+    test("returns null when source equals target after replacement", () => {
+        const edgeReplacer = {
+            "root.parallel.child1": "root.parallel",
+            "root.parallel.child2": "root.parallel",
+        }
+        const collapsed = new Set(["root.parallel"])
+        expect(replaceIfCollapsed("root.parallel.child1", "root.parallel.child2", edgeReplacer, [], collapsed)).toBeNull()
+    })
+
+    test("returns null when either endpoint is hidden and not in collapsed", () => {
+        const hiddenNodes = ["root.hiddenTask"]
+        const collapsed = new Set(["root.parallel"])
+
+        expect(replaceIfCollapsed("root.task1", "root.hiddenTask", {}, hiddenNodes, collapsed)).toBeNull()
+        expect(replaceIfCollapsed("root.hiddenTask", "root.task2", {}, hiddenNodes, collapsed)).toBeNull()
+    })
+})
+
+describe("getNodePosition", () => {
+    test("returns the stored position as top-left corner coordinates", () => {
+        const node = {x: 100, y: 80, width: 40, height: 20}
+        expect(getNodePosition(node)).toEqual({x: 80, y: 70})
+    })
+
+    test("calculates position relative to parent when parent is provided", () => {
+        const node = {x: 100, y: 80, width: 40, height: 20}
+        const parent = {x: 60, y: 50, width: 20, height: 20}
+        expect(getNodePosition(node, parent)).toEqual({x: 30, y: 30})
+    })
+})
+
