@@ -31,7 +31,7 @@ vi.mock("nprogress", () => ({
 }))
 
 import type {Router} from "vue-router"
-import {handled, isReportedCentrally, setupKestraHttp, type KestraHttpError} from "./kestraHttp"
+import {handled, handledIf, isReportedCentrally, setupKestraHttp, type KestraHttpError} from "./kestraHttp"
 import {markServerReachable, markServerUnreachable, UNREACHABLE_DELAY, useServerReachability} from "../composables/useServerReachability"
 import {isReauthOpen, requestReauth, resolveReauth} from "../composables/useReauthDialog"
 
@@ -381,5 +381,73 @@ describe("setupKestraHttp session recovery", () => {
         await vi.waitFor(() => expect(confirm).toHaveBeenCalled())
 
         expect(isReauthOpen()).toBe(true)
+    })
+})
+
+describe("handledIf", () => {
+    it("marks the error as handled when the status matches the accepted statuses", () => {
+        const errorDirect = {status: 404}
+        expect(handledIf(errorDirect, [404, 409])).toBe(true)
+        expect((errorDirect as Record<string, unknown>).__kestra_handled).toBe(true)
+
+        const errorInResponse = {response: {status: 409}}
+        expect(handledIf(errorInResponse, [404, 409])).toBe(true)
+        expect((errorInResponse as Record<string, unknown>).__kestra_handled).toBe(true)
+    })
+
+    it("leaves the error unhandled when the status is not in the accepted statuses", () => {
+        const error500 = {status: 500}
+        expect(handledIf(error500, [404])).toBe(false)
+        expect((error500 as Record<string, unknown>).__kestra_handled).toBeUndefined()
+
+        const errorNoStatus = {message: "Network Error"}
+        expect(handledIf(errorNoStatus, [404])).toBe(false)
+        expect((errorNoStatus as Record<string, unknown>).__kestra_handled).toBeUndefined()
+
+        expect(handledIf(null, [404])).toBe(false)
+        expect(handledIf(undefined, [404])).toBe(false)
+    })
+
+    it("preserves the original error and its fields either way", () => {
+        const matchingError = new Error("Not Found")
+        Object.assign(matchingError, {status: 404, customField: "custom-value"})
+
+        const matched = handledIf(matchingError, [404])
+        expect(matched).toBe(true)
+        expect(matchingError.message).toBe("Not Found")
+        expect((matchingError as Record<string, unknown>).customField).toBe("custom-value")
+        expect((matchingError as Record<string, unknown>).__kestra_handled).toBe(true)
+
+        const unmatchingError = new Error("Server Error")
+        Object.assign(unmatchingError, {status: 500, customField: "preserved"})
+
+        const unmatched = handledIf(unmatchingError, [404])
+        expect(unmatched).toBe(false)
+        expect(unmatchingError.message).toBe("Server Error")
+        expect((unmatchingError as Record<string, unknown>).customField).toBe("preserved")
+        expect((unmatchingError as Record<string, unknown>).__kestra_handled).toBeUndefined()
+    })
+
+    it("composes with other request options rather than replacing them", () => {
+        const requestError: KestraHttpError = {
+            name: "KestraHttpError",
+            message: "Request failed",
+            status: 404,
+            config: {method: "get", url: "/api/v1/flows"},
+            problem: {title: "Flow not found", status: 404},
+            crossOrigin: false,
+        }
+
+        const isHandled = handledIf(requestError, [404])
+        expect(isHandled).toBe(true)
+
+        // Preexisting options remain intact
+        expect(requestError.config).toEqual({method: "get", url: "/api/v1/flows"})
+        expect(requestError.problem).toEqual({title: "Flow not found", status: 404})
+        expect(requestError.crossOrigin).toBe(false)
+        expect(requestError.__kestra_handled).toBe(true)
+
+        // It composes with isReportedCentrally so the central toast is skipped
+        expect(isReportedCentrally(requestError)).toBe(false)
     })
 })
