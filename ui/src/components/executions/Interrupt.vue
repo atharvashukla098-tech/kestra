@@ -23,7 +23,7 @@
                 </p>
 
                 <p>
-                    {{ $t('change state current state') }} <KsExecutionStatus size="small" class="me-1" :status="taskRun.state.current" />
+                    {{ $t('change state current state') }} <KsExecutionStatus size="small" class="execution-status" :status="taskRun.state.current" />
                 </p>
 
                 <KsSelect
@@ -38,7 +38,7 @@
                         :disabled="item.disabled"
                     >
                         <template #default>
-                            <KsExecutionStatus size="small" :label="true" class="me-1" :status="item.code" />
+                            <KsExecutionStatus size="small" :label="true" class="execution-status" :status="item.code" />
                             <i18n-t keypath="mark as" tag="span">
                                 <template #status><code>{{ item.code }}</code></template>
                             </i18n-t>
@@ -142,3 +142,10 @@
             })
     }
 </script>
+
+<style scoped lang="scss">
+.execution-status {
+    margin-inline-end: var(--ks-spacing-1);
+}
+</style>
+
