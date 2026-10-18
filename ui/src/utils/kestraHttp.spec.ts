@@ -31,7 +31,7 @@ vi.mock("nprogress", () => ({
 }))
 
 import type {Router} from "vue-router"
-import {handled, isReportedCentrally, setupKestraHttp, type KestraHttpError} from "./kestraHttp"
+import {handled, handledIf, isReportedCentrally, setupKestraHttp, type KestraHttpError} from "./kestraHttp"
 import {markServerReachable, markServerUnreachable, UNREACHABLE_DELAY, useServerReachability} from "../composables/useServerReachability"
 import {isReauthOpen, requestReauth, resolveReauth} from "../composables/useReauthDialog"
 
@@ -383,3 +383,82 @@ describe("setupKestraHttp session recovery", () => {
         expect(isReauthOpen()).toBe(true)
     })
 })
+
+describe("handledIf", () => {
+    it("marks an error handled when the status is in the expected list", () => {
+        const error = Object.assign(new Error("Resource not found"), {status: 404})
+        const result = handledIf(error, [404, 422])
+
+        expect(result).toBe(true)
+        expect(error).toHaveProperty("__kestra_handled", true)
+    })
+
+    it("reads status from response.status when top-level status is absent", () => {
+        const error = {response: {status: 409}}
+        const result = handledIf(error, [409, 422])
+
+        expect(result).toBe(true)
+        expect(error).toHaveProperty("__kestra_handled", true)
+    })
+
+    it("leaves the error unhandled when the status is rejected", () => {
+        const error = Object.assign(new Error("Internal Server Error"), {status: 500})
+        const result = handledIf(error, [404, 422])
+
+        expect(result).toBe(false)
+        expect(error).not.toHaveProperty("__kestra_handled")
+    })
+
+    it("preserves original error properties whether accepted or rejected", () => {
+        const acceptedError = Object.assign(new Error("Not Found"), {
+            status: 404,
+            detail: "flow not found",
+            config: {method: "GET", url: "/api/v1/flows"},
+        })
+        handledIf(acceptedError, [404])
+        expect(acceptedError.message).toBe("Not Found")
+        expect(acceptedError.detail).toBe("flow not found")
+        expect(acceptedError.config).toEqual({method: "GET", url: "/api/v1/flows"})
+
+        const rejectedError = Object.assign(new Error("Conflict"), {
+            status: 409,
+            detail: "flow already exists",
+            config: {method: "POST", url: "/api/v1/flows"},
+        })
+        handledIf(rejectedError, [404])
+        expect(rejectedError.message).toBe("Conflict")
+        expect(rejectedError.detail).toBe("flow already exists")
+        expect(rejectedError.config).toEqual({method: "POST", url: "/api/v1/flows"})
+    })
+
+    it("returns false without error for non-object, null, or status-less errors", () => {
+        expect(handledIf(null, [404])).toBe(false)
+        expect(handledIf(undefined, [404])).toBe(false)
+        expect(handledIf("some string error", [404])).toBe(false)
+        expect(handledIf(new Error("Plain error without status"), [404])).toBe(false)
+        expect(handledIf({}, [404])).toBe(false)
+    })
+
+    it("composes with central error reporting: prevents central toast when handled", async () => {
+        const coreStore = {message: undefined as unknown}
+        setupKestraHttp({}, {coreStore})
+        const onErrorInterceptor = fakeClient.interceptors.error.use.mock.calls.at(-1)![0]
+
+        const error = Object.assign(new Error("Not Found"), {
+            status: 404,
+            response: {
+                data: {title: "not found"},
+                status: 404,
+                headers: {forEach: () => {}},
+            },
+            config: {method: "GET", url: "/api/v1/flows/missing"},
+        })
+
+        onErrorInterceptor(error, error.response, error.config, {})
+        handledIf(error, [404])
+
+        await new Promise((r) => setTimeout(r, 0))
+        expect(coreStore.message).toBeUndefined()
+    })
+})
+
