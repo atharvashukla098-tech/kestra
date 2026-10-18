@@ -1,4 +1,4 @@
-import {watch, type Ref} from "vue"
+import {getCurrentScope, onScopeDispose, watch, type Ref} from "vue"
 import * as monaco from "monaco-editor/editor/editor.api"
 
 const PEBBLE_BLOCK_PATTERN = "\\{\\{([\\s\\S]*?)\\}\\}|\\{%([\\s\\S]*?)%\\}"
@@ -20,14 +20,21 @@ export function useEditorDecorations(ctx: EditorDecorationsContext) {
         lines?: monaco.editor.IModelDeltaDecoration[]
     } = {}
 
+    if (getCurrentScope()) {
+        onScopeDispose(() => {
+            collection?.clear()
+            collection = undefined
+        })
+    }
+
     function attach(editor: monaco.editor.IStandaloneCodeEditor | monaco.editor.IStandaloneDiffEditor) {
         collection = editor.createDecorationsCollection()
     }
 
     function apply() {
         collection?.clear()
-        if (lists.lines) collection?.append(lists.lines)
-        if (lists.pebble) collection?.append(lists.pebble)
+        if (lists.lines?.length) collection?.append(lists.lines)
+        if (lists.pebble?.length) collection?.append(lists.pebble)
     }
 
     function highlightPebble() {
@@ -78,9 +85,11 @@ export function useEditorDecorations(ctx: EditorDecorationsContext) {
     function selectLine(line: number) {
         const editor = ctx.modifiedEditor()
         if (!editor) return
-        editor.focus()
-        const end = editor.getModel()?.getLineMaxColumn(line) ?? 0
-        editor.setSelection(new monaco.Range(line, 0, line, end))
+        const model = editor.getModel?.()
+        if (!model) return
+        editor.focus?.()
+        const end = model.getLineMaxColumn?.(line) ?? 0
+        editor.setSelection?.(new monaco.Range(line, 0, line, end))
     }
 
     function highlightInitial() {
@@ -89,8 +98,13 @@ export function useEditorDecorations(ctx: EditorDecorationsContext) {
         const editor = ctx.modifiedEditor()
         if (!editor) return
 
-        editor.focus()
-        const lines = editor.getModel()!.getLinesContent()
+        const model = editor.getModel?.()
+        if (!model) return
+
+        editor.focus?.()
+        const lines = model.getLinesContent?.()
+        if (!lines) return
+
         let lineNumber = 0
         for (let i = 0; i < lines.length; i++) {
             if (lines[i].includes(needle)) {
@@ -98,9 +112,10 @@ export function useEditorDecorations(ctx: EditorDecorationsContext) {
                 break
             }
         }
-        const endLineCharacter = editor.getModel()!.getLineMaxColumn(lineNumber) ?? 0
-        editor.setSelection(new monaco.Range(lineNumber, 0, lineNumber, endLineCharacter))
-        editor.revealLineInCenter(lineNumber)
+        if (!lineNumber) return
+        const endLineCharacter = model.getLineMaxColumn?.(lineNumber) ?? 0
+        editor.setSelection?.(new monaco.Range(lineNumber, 0, lineNumber, endLineCharacter))
+        editor.revealLineInCenter?.(lineNumber)
     }
 
     watch(ctx.highlightLine, (line) => {
