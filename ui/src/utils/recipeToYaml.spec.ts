@@ -1,6 +1,18 @@
 import {describe, expect, it} from "vitest"
 import * as flowYamlUtils from "@kestra-io/topology/flow-yaml-utils"
-import {recipeToFlowObject, recipeToYaml, SYSTEM_FLOW_RECIPE_ID, type RecipeState} from "./recipeToYaml"
+import {State} from "@kestra-io/design-system"
+import {
+    recipeToFlowObject,
+    recipeToYaml,
+    notifyTaskFqcn,
+    DEFAULT_CRON,
+    DEFAULT_WEBHOOK_KEY,
+    DEFAULT_SLACK_CHANNEL,
+    DEFAULT_EMAIL_TO,
+    DEFAULT_STATES,
+    SYSTEM_FLOW_RECIPE_ID,
+    type RecipeState,
+} from "./recipeToYaml"
 import {parseBlock} from "../../tests/unit/utils/parsedBlock"
 
 const baseState = (): RecipeState => ({
@@ -420,6 +432,136 @@ describe("recipeToYaml", () => {
             expect(Array.isArray(task.to)).toBe(false)
             expect(task.host).toContain("EMAIL_HOST")
             expect(task.port).toBe(465)
+        })
+    })
+
+    describe("notifyTaskFqcn", () => {
+        it("returns the right fully qualified class for each supported channel in execution mode", () => {
+            expect(notifyTaskFqcn("slack", true)).toBe("io.kestra.plugin.slack.notifications.SlackExecution")
+            expect(notifyTaskFqcn("teams", true)).toBe("io.kestra.plugin.microsoft365.teams.TeamsExecution")
+            expect(notifyTaskFqcn("email", true)).toBe("io.kestra.plugin.email.MailExecution")
+        })
+
+        it("returns the right fully qualified class for each supported channel in non-execution mode", () => {
+            expect(notifyTaskFqcn("slack", false)).toBe("io.kestra.plugin.slack.notifications.SlackIncomingWebhook")
+            expect(notifyTaskFqcn("teams", false)).toBe("io.kestra.plugin.microsoft365.teams.TeamsIncomingWebhook")
+            expect(notifyTaskFqcn("email", false)).toBe("io.kestra.plugin.email.MailSend")
+        })
+
+        it("throws predictably for an unknown notification channel", () => {
+            expect(() => notifyTaskFqcn("unknown" as unknown as "slack", true)).toThrow()
+            expect(() => notifyTaskFqcn("unknown" as unknown as "slack", false)).toThrow()
+        })
+
+        it("ignores unknown channels in RecipeState so YAML does not contain undefined", () => {
+            const state = baseState()
+            const dirtyNotify = state.notify as unknown as Record<string, boolean>
+            dirtyNotify["unknownChannel"] = true
+            const yaml = recipeToYaml(state, "system")
+            const parsed = parseBlock(yaml)
+            expect(yaml).not.toContain("undefined")
+            expect((parsed.tasks as Record<string, unknown>[]).some(t => t.id === "notify_unknownChannel")).toBe(false)
+        })
+    })
+
+    describe("recipe defaults", () => {
+        it("DEFAULT_CRON is non-empty and of expected 5-part cron shape", () => {
+            expect(DEFAULT_CRON).toBeTruthy()
+            expect(typeof DEFAULT_CRON).toBe("string")
+            expect(DEFAULT_CRON.trim().split(/\s+/)).toHaveLength(5)
+            expect(DEFAULT_CRON).toBe("0 9 * * *")
+        })
+
+        it("DEFAULT_WEBHOOK_KEY is non-empty and of expected string shape", () => {
+            expect(DEFAULT_WEBHOOK_KEY).toBeTruthy()
+            expect(typeof DEFAULT_WEBHOOK_KEY).toBe("string")
+            expect(DEFAULT_WEBHOOK_KEY).toBe("my-webhook-key")
+        })
+
+        it("DEFAULT_SLACK_CHANNEL is non-empty and starts with a hash", () => {
+            expect(DEFAULT_SLACK_CHANNEL).toBeTruthy()
+            expect(typeof DEFAULT_SLACK_CHANNEL).toBe("string")
+            expect(DEFAULT_SLACK_CHANNEL.startsWith("#")).toBe(true)
+            expect(DEFAULT_SLACK_CHANNEL).toBe("#alerts")
+        })
+
+        it("DEFAULT_EMAIL_TO is non-empty and formatted as a valid email address", () => {
+            expect(DEFAULT_EMAIL_TO).toBeTruthy()
+            expect(typeof DEFAULT_EMAIL_TO).toBe("string")
+            expect(DEFAULT_EMAIL_TO).toMatch(/^[^@\s]+@[^@\s]+\.[^@\s]+$/)
+            expect(DEFAULT_EMAIL_TO).toBe("team@your-domain.com")
+        })
+
+        it("DEFAULT_STATES lists real execution states", () => {
+            expect(DEFAULT_STATES).toBeDefined()
+            expect(Array.isArray(DEFAULT_STATES)).toBe(true)
+            expect(DEFAULT_STATES.length).toBeGreaterThan(0)
+            for (const state of DEFAULT_STATES) {
+                expect(state in State).toBe(true)
+                expect((State as Record<string, unknown>)[state]).toBe(state)
+            }
+            expect(DEFAULT_STATES).toEqual([State.FAILED, State.WARNING])
+        })
+
+        it("generates valid YAML for a recipe using empty fields that fallback to defaults", () => {
+            const defaultState: RecipeState = {
+                triggerType: "execution",
+                watchNamespace: "",
+                includeSub: false,
+                states: [],
+                cron: "",
+                timezone: "",
+                webhookKey: "",
+                otherTriggerType: "",
+                notify: {slack: true, teams: true, email: true, custom: false},
+                slackChannel: "",
+                teamsWebhook: "",
+                emailTo: "",
+            }
+
+            const yaml = recipeToYaml(defaultState, "system")
+            expect(yaml).toBeTruthy()
+            expect(yaml).not.toContain("undefined")
+
+            const parsed = parseBlock(yaml)
+            expect(parsed.id).toBe(SYSTEM_FLOW_RECIPE_ID)
+            expect(parsed.namespace).toBe("system")
+            expect(parsed.triggers[0].states).toEqual(DEFAULT_STATES)
+
+            const slackTask = (parsed.tasks as Record<string, unknown>[]).find(t => t.id === "notify_slack")
+            expect(slackTask?.channel).toBe(DEFAULT_SLACK_CHANNEL)
+
+            const emailTask = (parsed.tasks as Record<string, unknown>[]).find(t => t.id === "notify_email")
+            expect(emailTask?.to).toBe(DEFAULT_EMAIL_TO)
+        })
+
+        it("generates valid YAML for schedule and webhook triggers using default cron and webhook key", () => {
+            const scheduleState: RecipeState = {
+                triggerType: "schedule",
+                watchNamespace: "",
+                includeSub: false,
+                states: [],
+                cron: "",
+                timezone: "",
+                webhookKey: "",
+                otherTriggerType: "",
+                notify: {slack: false, teams: false, email: false, custom: false},
+                slackChannel: "",
+                teamsWebhook: "",
+                emailTo: "",
+            }
+
+            const scheduleYaml = recipeToYaml(scheduleState, "system")
+            const parsedSchedule = parseBlock(scheduleYaml)
+            expect(parsedSchedule.triggers[0].cron).toBe(DEFAULT_CRON)
+
+            const webhookState: RecipeState = {
+                ...scheduleState,
+                triggerType: "webhook",
+            }
+            const webhookYaml = recipeToYaml(webhookState, "system")
+            const parsedWebhook = parseBlock(webhookYaml)
+            expect(parsedWebhook.triggers[0].key).toBe(DEFAULT_WEBHOOK_KEY)
         })
     })
 })
