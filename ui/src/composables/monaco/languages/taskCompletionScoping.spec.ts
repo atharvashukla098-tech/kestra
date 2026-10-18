@@ -1,5 +1,6 @@
 import {describe, expect, it} from "vitest"
 import {
+    findTaskLikeAtCursor,
     taskIdentityAtCursor,
     taskTypeAtCursor,
     scopePropertySuggestionsToTaskType,
@@ -260,3 +261,74 @@ describe("scopePropertySuggestionsToTaskType", () => {
         ).toHaveLength(suggestions.length)
     })
 })
+
+describe("findTaskLikeAtCursor", () => {
+    it("resolves to that task when cursor is inside a top-level task", () => {
+        const cursorIndex = FLOW.indexOf("message: hi") + 2
+        const result = findTaskLikeAtCursor({source: FLOW, cursorIndex})
+
+        expect(result).toBeDefined()
+        expect(result?.id).toBe("hello")
+        expect(result?.type).toBe("io.kestra.plugin.core.log.Log")
+    })
+
+    it("resolves to the inner task when cursor is inside a nested flowable's task", () => {
+        const nestedFlow = `id: myflow
+namespace: my.ns
+tasks:
+  - id: parentFlowable
+    type: io.kestra.plugin.core.flow.Sequential
+    tasks:
+      - id: innerChild
+        type: io.kestra.plugin.core.log.Log
+        message: inner
+`
+        const cursorIndex = nestedFlow.indexOf("message: inner") + 3
+        const result = findTaskLikeAtCursor({source: nestedFlow, cursorIndex})
+
+        expect(result).toBeDefined()
+        expect(result?.id).toBe("innerChild")
+        expect(result?.type).toBe("io.kestra.plugin.core.log.Log")
+    })
+
+    it("resolves to neither when cursor is between tasks", () => {
+        const flowBetweenTasks = `id: myflow
+namespace: my.ns
+tasks:
+  - id: task1
+    type: io.kestra.plugin.core.log.Log
+  - 
+  - id: task2
+    type: io.kestra.plugin.core.log.Log
+`
+        const betweenTasksIndex = flowBetweenTasks.indexOf("  - id: task2")
+        expect(findTaskLikeAtCursor({source: flowBetweenTasks, cursorIndex: betweenTasksIndex})).toBeUndefined()
+
+        const outsideTasksIndex = flowBetweenTasks.indexOf("namespace:") + 3
+        expect(findTaskLikeAtCursor({source: flowBetweenTasks, cursorIndex: outsideTasksIndex})).toBeUndefined()
+    })
+
+    it("resolves to the task when cursor is inside errors block", () => {
+        const errorFlow = `id: myflow
+namespace: my.ns
+errors:
+  - id: errorHandler
+    type: io.kestra.plugin.core.log.Log
+    message: on-error
+`
+        const cursorIndex = errorFlow.indexOf("message: on-error") + 2
+        const result = findTaskLikeAtCursor({source: errorFlow, cursorIndex})
+
+        expect(result).toBeDefined()
+        expect(result?.id).toBe("errorHandler")
+        expect(result?.type).toBe("io.kestra.plugin.core.log.Log")
+    })
+
+    it("returns undefined for malformed YAML or empty input rather than throwing", () => {
+        expect(findTaskLikeAtCursor({source: "", cursorIndex: 0})).toBeUndefined()
+        expect(findTaskLikeAtCursor({source: "::::unparsable document!!", cursorIndex: 5})).toBeUndefined()
+        expect(findTaskLikeAtCursor({source: "   \n\t  ", cursorIndex: 2})).toBeUndefined()
+    })
+})
+
+
