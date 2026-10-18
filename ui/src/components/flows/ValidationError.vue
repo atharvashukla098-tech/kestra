@@ -11,7 +11,7 @@
         <!-- Errors -->
         <KsTooltip
             v-if="errors"
-            popperClass="p-0 bg-transparent"
+            popperClass="validation-tooltip-popper"
             :placement="tooltipPlacement"
             :showArrow="false"
             rawContent
@@ -19,8 +19,8 @@
             <template #content>
                 <KsContainer class="validation-tooltip">
                     <KsHeader>
-                        <AlertCircle class="align-middle error" />
-                        <span class="align-middle">
+                        <AlertCircle class="error" />
+                        <span>
                             {{ $t("error detected") }}
                         </span>
                     </KsHeader>
@@ -37,7 +37,7 @@
         <!-- Warnings -->
         <KsTooltip
             v-if="warnings"
-            popperClass="p-0 bg-transparent"
+            popperClass="validation-tooltip-popper"
             :placement="tooltipPlacement"
             :showArrow="false"
             rawContent
@@ -45,8 +45,8 @@
             <template #content>
                 <KsContainer class="validation-tooltip">
                     <KsHeader>
-                        <Alert class="align-middle warning" />
-                        <span class="align-middle">
+                        <Alert class="warning" />
+                        <span>
                             {{ $t("warning detected") }}
                         </span>
                     </KsHeader>
@@ -71,7 +71,7 @@
         <!-- Infos -->
         <KsTooltip
             v-if="infos && !warnings"
-            popperClass="p-0 bg-transparent"
+            popperClass="validation-tooltip-popper"
             :placement="tooltipPlacement"
             :showArrow="false"
             rawContent
@@ -79,8 +79,8 @@
             <template #content>
                 <KsContainer class="validation-tooltip">
                     <KsHeader>
-                        <Alert class="align-middle info" />
-                        <span class="align-middle">
+                        <Alert class="info" />
+                        <span>
                             {{ $t("informative notice") }}
                         </span>
                     </KsHeader>
@@ -98,6 +98,7 @@
 
 <script setup lang="ts">
     import {nextTick, ref} from "vue"
+
     import AlertCircle from "vue-material-design-icons/AlertCircle.vue"
     import Alert from "vue-material-design-icons/Alert.vue"
 
@@ -123,10 +124,10 @@
         }
         const buttonLabels = rootContainer.value.querySelectorAll(".kel-button span.label")
 
-        buttonLabels.forEach(el => el.classList.remove("d-none"))
+        buttonLabels.forEach(el => el.classList.remove("is-hidden"))
         nextTick(() => {
             if(rootContainer.value && rootContainer.value.offsetLeft + rootContainer.value.offsetWidth > maxWidth) {
-                buttonLabels.forEach(el => el.classList.add("d-none"))
+                buttonLabels.forEach(el => el.classList.add("is-hidden"))
             }
         })
     }
@@ -137,16 +138,21 @@
 </script>
 
 <style scoped lang="scss">
+    :global(.validation-tooltip-popper) {
+        padding: 0;
+        background-color: transparent;
+    }
+
     .validation-tooltip {
         padding: 0;
         width: fit-content;
         min-width: 20vw;
         max-width: 50vw;
         max-height: 500px;
-        border-radius: 0.5rem;
+        border-radius: var(--ks-radius-md);
         color: var(--ks-text-primary);
         overflow-y: auto;
-        display:flex;
+        display: flex;
         flex-direction: column;
 
         > * {
@@ -155,15 +161,22 @@
         }
 
         .kel-header {
-            padding: 1rem;
+            padding: var(--ks-spacing-4);
             background-color: var(--ks-bg-surface);
-            border-radius: 0.5rem 0.5rem 0 0;
+            border-radius: var(--ks-radius-md) var(--ks-radius-md) 0 0;
             font-size: var(--ks-font-size-sm);
-            font-weight: 700;
+            font-weight: var(--ks-font-weight-bold);
+            display: flex;
+            align-items: center;
 
             .material-design-icon {
                 font-size: var(--ks-font-size-xl);
-                margin-right: .5rem;
+                margin-right: var(--ks-spacing-2);
+                vertical-align: middle;
+            }
+
+            span {
+                vertical-align: middle;
             }
         }
 
@@ -177,6 +190,10 @@
             min-height: fit-content;
             color: var(--ks-text-primary);
         }
+    }
+
+    :deep(.is-hidden) {
+        display: none !important;
     }
 
     .warning {
