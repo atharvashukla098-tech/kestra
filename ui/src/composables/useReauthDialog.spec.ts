@@ -1,5 +1,5 @@
 import {describe, it, expect, vi} from "vitest"
-import {isReauthOpen, recheckReauth, requestReauth, resolveReauth, submitReauth, useReauthDialog} from "./useReauthDialog"
+import {confirmReauth, isReauthOpen, recheckReauth, requestReauth, resolveReauth, submitReauth, useReauthDialog} from "./useReauthDialog"
 
 describe("useReauthDialog", () => {
     const signIn = vi.fn().mockResolvedValue(undefined)
@@ -74,4 +74,63 @@ describe("useReauthDialog", () => {
         resolveReauth(true)
         await expect(next).resolves.toBe(true)
     })
+
+    describe("confirmReauth and resolution lifecycle", () => {
+        it("confirming resolves truthy and closes the dialog", async () => {
+            const confirmFn = vi.fn().mockResolvedValue(undefined)
+            const pending = requestReauth({confirm: confirmFn})
+            expect(isReauthOpen()).toBe(true)
+
+            await confirmReauth()
+            expect(confirmFn).toHaveBeenCalled()
+
+            resolveReauth(true)
+            const result = await pending
+            expect(result).toBe(true)
+            expect(isReauthOpen()).toBe(false)
+        })
+
+        it("dismissing resolves falsy and closes the dialog", async () => {
+            const pending = requestReauth({loginUrl: "/ui/login"})
+            expect(isReauthOpen()).toBe(true)
+
+            resolveReauth(false)
+            const result = await pending
+            expect(result).toBe(false)
+            expect(isReauthOpen()).toBe(false)
+        })
+
+        it("a second call while one is pending does not open two dialogs", async () => {
+            const first = requestReauth({loginUrl: "/login-1"})
+            expect(isReauthOpen()).toBe(true)
+
+            const second = requestReauth({loginUrl: "/login-2"})
+            expect(isReauthOpen()).toBe(true)
+            expect(first).toBe(second)
+
+            resolveReauth(true)
+            await expect(Promise.all([first, second])).resolves.toEqual([true, true])
+            expect(isReauthOpen()).toBe(false)
+        })
+
+        it("ensures the pending promise is always settled so no caller hangs", async () => {
+            const callers = [
+                requestReauth({signIn}),
+                requestReauth({signIn}),
+                requestReauth({signIn}),
+            ]
+
+            resolveReauth(false)
+            const results = await Promise.all(callers)
+            expect(results).toEqual([false, false, false])
+            expect(isReauthOpen()).toBe(false)
+        })
+
+        it("safely handles confirmReauth when no confirm callback was registered", async () => {
+            requestReauth({loginUrl: "/login"})
+            await expect(confirmReauth()).resolves.toBeUndefined()
+            resolveReauth(false)
+        })
+    })
 })
+
