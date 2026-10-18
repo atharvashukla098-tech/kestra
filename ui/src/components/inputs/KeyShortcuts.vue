@@ -1,32 +1,32 @@
 <template>
-    <KsDialog v-model="isKeyShortcutsDialogShown" headerClass="p-3" bodyClass="p-2" scrollable>
+    <KsDialog v-model="isKeyShortcutsDialogShown" headerClass="shortcuts-dialog-header" bodyClass="shortcuts-dialog-body" scrollable>
         <template #header>
-            <div class="d-flex align-items-center gap-2 fw-normal">
+            <div class="shortcuts-header">
                 <KsIcon size="xl">
                     <Keyboard />
                 </KsIcon>
-                <span class="fs-6">
+                <span class="shortcuts-header-title">
                     {{ $t("editor_shortcuts.label") }}
                 </span>
             </div>
         </template>
 
-        <div class="d-flex flex-column gap-3 fw-normal">
+        <div class="shortcuts-body">
             <div
                 v-for="(command, i) in commands"
                 :key="i"
-                class="d-flex align-items-center gap-3"
+                class="shortcut-row"
             >
-                <div class="d-flex align-items-center gap-2 keys">
+                <div class="keys">
                     <template v-for="(key, index) in command.keys" :key="index">
                         <KsTag>{{ key }}</KsTag>
                         <span
                             v-if="index < command.keys.length - 1"
-                            class="fw-bold"
+                            class="key-separator"
                         >+</span>
                     </template>
                 </div>
-                <div class="text-break">
+                <div class="shortcut-description">
                     {{ $t(command.description) }}
                 </div>
             </div>
@@ -101,6 +101,53 @@
 </script>
 
 <style scoped lang="scss">
+:global(.shortcuts-dialog-header) {
+    padding: var(--ks-spacing-4);
+}
+
+:global(.shortcuts-dialog-body) {
+    padding: var(--ks-spacing-2);
+}
+
+.shortcuts-header {
+    display: flex;
+    align-items: center;
+    gap: var(--ks-spacing-2);
+    font-weight: var(--ks-font-weight-regular);
+}
+
+.shortcuts-header-title {
+    font-size: var(--ks-font-size-base);
+}
+
+.shortcuts-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ks-spacing-4);
+    font-weight: var(--ks-font-weight-regular);
+}
+
+.shortcut-row {
+    display: flex;
+    align-items: center;
+    gap: var(--ks-spacing-4);
+}
+
+.keys {
+    display: flex;
+    align-items: center;
+    gap: var(--ks-spacing-2);
+}
+
+.key-separator {
+    font-weight: var(--ks-font-weight-bold);
+}
+
+.shortcut-description {
+    word-wrap: break-word;
+    word-break: break-word;
+}
+
 .kel-tag {
     background-color: var(--ks-bg-tag);
     color: var(--ks-text-primary);
