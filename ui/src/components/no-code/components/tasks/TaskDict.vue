@@ -53,7 +53,7 @@
                 </KsCol>
                 <KsCol :span="16">
                     <TaskExpression
-                        :modelValue="item[1]"
+                        :modelValue="item[1] as string | Record<string, unknown> | undefined"
                         @update:model-value="onValueChange(index, $event)"
                         :root="getKey(item[0])"
                         :schema="schema.additionalProperties"
@@ -88,9 +88,16 @@
         inheritAttrs: false,
     })
 
+    type DictSchema = {
+        additionalProperties?: unknown;
+        required?: string[];
+        type?: string;
+        [key: string]: unknown;
+    }
+
     const props = withDefaults(defineProps<{
-        modelValue?: Record<string, any>;
-        schema?: any;
+        modelValue?: Record<string, unknown>;
+        schema?: DictSchema;
         root?: string;
         disabled?: boolean;
     }>(), {
@@ -112,8 +119,8 @@
         ) : undefined
     })
 
-    const currentValue = ref<[string, any][]>([])
-    const keyInputRefs: Record<number, any> = {}
+    const currentValue = ref<[string, unknown][]>([])
+    const keyInputRefs: Record<number, unknown> = {}
 
     const localEdit = ref(false)
 
@@ -171,7 +178,7 @@
         emitUpdate()
     }
 
-    function onValueChange(key: number, val: any) {
+    function onValueChange(key: number, val: unknown) {
         currentValue.value[key][1] = val
         emitUpdate()
     }
@@ -188,7 +195,7 @@
 
         nextTick(() => {
             setTimeout(() => {
-                keyInputRefs[newIndex]?.focus()
+                (keyInputRefs[newIndex] as { focus?: () => void } | undefined)?.focus?.()
             }, 100)
         })
     }
