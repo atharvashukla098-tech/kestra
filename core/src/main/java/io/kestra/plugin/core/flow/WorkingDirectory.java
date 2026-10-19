@@ -351,9 +351,10 @@ public class WorkingDirectory extends Sequential implements NamespaceFilesInterf
 
             if (cacheFilesAreUpdated) {
                 runContext.logger().debug("Cache files changed, we update the cache");
+                Path archiveFile = runContext.workingDir().createTempFile(".zip");
                 try (
-                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                    ZipOutputStream archive = new ZipOutputStream(bos)
+                    OutputStream os = Files.newOutputStream(archiveFile);
+                    ZipOutputStream archive = new ZipOutputStream(os)
                 ) {
 
                     for (var path : matchesList) {
@@ -365,16 +366,14 @@ public class WorkingDirectory extends Sequential implements NamespaceFilesInterf
                         var relativeFileName = file.getPath().substring(runContext.workingDir().path().toString().length() + 1);
                         var zipEntry = new ZipEntry(relativeFileName);
                         archive.putNextEntry(zipEntry);
-                        archive.write(Files.readAllBytes(path));
+                        Files.copy(path, archive);
                         archive.closeEntry();
                     }
 
                     archive.finish();
-                    Path archiveFile = runContext.workingDir().createTempFile(".zip");
-                    Files.write(archiveFile, bos.toByteArray());
-                    URI uri = runContext.storage().putCacheFile(archiveFile.toFile(), getId(), taskRun.getValue());
-                    runContext.logger().debug("Caching in {}", uri);
                 }
+                URI uri = runContext.storage().putCacheFile(archiveFile.toFile(), getId(), taskRun.getValue());
+                runContext.logger().debug("Caching in {}", uri);
             } else {
                 runContext.logger().debug("Cache files didn't change, skip updating it");
             }

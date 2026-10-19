@@ -1,6 +1,7 @@
 package io.kestra.plugin.core.flow;
 
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -97,6 +98,58 @@ public class WorkingDirectoryTest {
     @LoadFlows({ "flows/valids/working-directory-cache.yml" })
     void cache() throws TimeoutException, IOException, QueueException, InternalException {
         suite.cache(runnerUtils);
+    }
+
+    @Test
+    void shouldStreamCacheArchiveToStorage() throws Exception {
+        // Given a flow and a WorkingDirectory caching every txt file of its working directory
+        Flow flow = Flow.builder()
+            .id("working-directory-stream-cache")
+            .namespace("io.kestra.tests")
+            .tenantId(MAIN_TENANT)
+            .build();
+        Execution execution = Execution.builder()
+            .id("execution")
+            .namespace(flow.getNamespace())
+            .flowId(flow.getId())
+            .tenantId(flow.getTenantId())
+            .flowRevision(1)
+            .state(new State())
+            .build();
+        TaskRun taskRun = TaskRun.builder()
+            .id("taskrun")
+            .tenantId(flow.getTenantId())
+            .namespace(flow.getNamespace())
+            .flowId(flow.getId())
+            .executionId(execution.getId())
+            .taskId("worker")
+            .value("iteration")
+            .state(new State())
+            .build();
+        WorkingDirectory workingDirectory = WorkingDirectory.builder()
+            .id("worker")
+            .type(WorkingDirectory.class.getName())
+            .cache(WorkingDirectory.Cache.builder()
+                .patterns(Property.ofValue(List.of("*.txt", "**/*.txt")))
+                .build())
+            .tasks(List.of(Return.builder().id("t1").type(Return.class.getName()).format(Property.ofValue("first")).build()))
+            .build();
+        RunContext runContext = runContextFactory.of(flow, workingDirectory, execution, taskRun);
+        java.nio.file.Files.writeString(runContext.workingDir().path().resolve("hello.txt"), "cached content");
+
+        // When the cache archive is uploaded
+        workingDirectory.postExecuteTasks(runContext, taskRun);
+
+        // Then the streamed archive is a complete zip holding the matched file with its content
+        Optional<InputStream> cacheStream = runContext.storage().getCacheFile(workingDirectory.getId(), taskRun.getValue());
+        assertThat(cacheStream).isPresent();
+        try (java.util.zip.ZipInputStream zip = new java.util.zip.ZipInputStream(cacheStream.get())) {
+            java.util.zip.ZipEntry entry = zip.getNextEntry();
+            assertThat(entry).isNotNull();
+            assertThat(entry.getName()).endsWith("hello.txt");
+            assertThat(new String(zip.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("cached content");
+            assertThat(zip.getNextEntry()).isNull();
+        }
     }
 
     @Test

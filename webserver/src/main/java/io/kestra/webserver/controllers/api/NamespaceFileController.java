@@ -3,6 +3,7 @@ package io.kestra.webserver.controllers.api;
 import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -275,33 +276,52 @@ public class NamespaceFileController {
     @Operation(tags = { "Files" }, summary = "Export namespace files as a ZIP")
     public HttpResponse<StreamedFile> exportNamespaceFiles(
         @Parameter(description = "The namespace id") @PathVariable String namespace) throws IOException {
-        try (
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            ZipOutputStream archive = new ZipOutputStream(bos)
-        ) {
-
+        Path tempFile = Files.createTempFile("namespace_export_", ".zip");
+        try {
             String tenantId = tenantService.resolveTenant();
 
             Namespace namespaceStorage = namespaceFactory.of(tenantId, namespace);
             List<NamespaceFileMetadata> allNsFiles = namespaceStorage.children("/", true);
-            allNsFiles.stream()
-                .filter(Predicate.not(NamespaceFileMetadata::isDirectory))
-                .map(NamespaceFileMetadata::getPath)
-                .forEach(throwConsumer(path ->
-                {
-                    try (InputStream inputStream = namespaceStorage.getFileContent(Path.of(path))) {
-                        archive.putNextEntry(new ZipEntry(path.substring(1))); // remove leading slash
-                        archive.write(inputStream.readAllBytes());
-                        archive.closeEntry();
+
+            try (
+                OutputStream os = new BufferedOutputStream(Files.newOutputStream(tempFile));
+                ZipOutputStream archive = new ZipOutputStream(os)
+            ) {
+                for (NamespaceFileMetadata fileMetadata : allNsFiles) {
+                    if (!fileMetadata.isDirectory()) {
+                        String path = fileMetadata.getPath();
+                        try (InputStream inputStream = namespaceStorage.getFileContent(Path.of(path))) {
+                            String entryName = path.replace('\\', '/');
+                            if (entryName.startsWith("/")) {
+                                entryName = entryName.substring(1);
+                            }
+                            archive.putNextEntry(new ZipEntry(entryName));
+                            inputStream.transferTo(archive);
+                            archive.closeEntry();
+                        }
                     }
-                }));
+                }
+                archive.finish();
+            }
 
-            archive.finish();
+            long length = Files.size(tempFile);
+            InputStream is = new BufferedInputStream(Files.newInputStream(tempFile)) {
+                @Override
+                public void close() throws IOException {
+                    try {
+                        super.close();
+                    } finally {
+                        Files.deleteIfExists(tempFile);
+                    }
+                }
+            };
 
-            byte[] zip = bos.toByteArray();
-            StreamedFile streamedFile = new StreamedFile(new ByteArrayInputStream(zip), MediaType.APPLICATION_OCTET_STREAM_TYPE, System.currentTimeMillis(), zip.length)
+            StreamedFile streamedFile = new StreamedFile(is, MediaType.APPLICATION_OCTET_STREAM_TYPE, System.currentTimeMillis(), length)
                 .attach(namespace + "_files.zip");
             return HttpResponse.ok(streamedFile).header(HttpHeaders.CACHE_CONTROL, "no-cache");
+        } catch (Exception e) {
+            Files.deleteIfExists(tempFile);
+            throw e;
         }
     }
 
